@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="2.24.T7" # Define the version tag
+VERSION="2.24.T9" # Define the version tag
 
 echo "Starting Terrakube build process..."
 

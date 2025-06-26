@@ -18,18 +18,23 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.terrakube.api.plugin.webclient.WebClientConfigProperties;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.transport.ProxyProvider;
-
 import java.net.InetSocketAddress;
 import java.util.Collections;
 
 @Service
 @Slf4j
 public class AzDevOpsTokenService {
+    @Autowired
+    private WebClient.Builder webClientBuilder; // Use Spring-managed WebClient.Builder
 
     @Value("${org.terrakube.hostname}")
     private String hostname;
+
+    @Autowired
+    private WebClientConfigProperties webClientConfigProperties;
 
     @Autowired
     private DynamicCredentialsService dynamicCredentialsService;
@@ -77,10 +82,27 @@ public class AzDevOpsTokenService {
         AzDevOpsToken azDevOpsToken = new AzDevOpsToken();
         try {
             DefaultAzureCredentialBuilder credentialBuilder = new DefaultAzureCredentialBuilder();
-            com.azure.core.http.HttpClient azureHttpClient = getAzureSdkHttpClientWithProxy();
-            if (azureHttpClient != null) {
-                credentialBuilder.httpClient(azureHttpClient);
+
+            if (webClientConfigProperties.isProxyEnabled()) {
+                ProxyOptions proxyOptions = new ProxyOptions(
+                        ProxyOptions.Type.HTTP,
+                        new InetSocketAddress(
+                                webClientConfigProperties.getProxyHost(),
+                                webClientConfigProperties.getProxyPort()
+                        )
+                );
+                if (!webClientConfigProperties.getProxyUsername().isEmpty() &&
+                        !webClientConfigProperties.getProxyPassword().isEmpty()) {
+                    proxyOptions.setCredentials(
+                            webClientConfigProperties.getProxyUsername(),
+                            webClientConfigProperties.getProxyPassword()
+                    );
+                }
+                credentialBuilder.httpClient(
+                        new NettyAsyncHttpClientBuilder().proxy(proxyOptions).build()
+                );
             }
+
             DefaultAzureCredential credential = credentialBuilder.build();
             TokenRequestContext requestContext = new TokenRequestContext()
                     .setScopes(Collections.singletonList(AZURE_DEVOPS_SCOPE));
@@ -101,48 +123,19 @@ public class AzDevOpsTokenService {
         return validateNewToken(azDevOpsToken);
     }
 
-    private WebClient getWebClient(String endpoint) {
-        String proxyHost = System.getProperty("http.proxyHost");
-        String proxyPort = System.getProperty("http.proxyPort");
-        String proxyUserName = System.getProperty("http.proxyUsername");
-        String proxyPassword = System.getProperty("http.proxyPassword");
-        if (proxyHost != null && proxyPort != null) {
-            log.info("Using proxy host: {} port: {}", proxyHost, proxyPort);
-            HttpClient httpClient = HttpClient.create()
-                    .proxy(proxy -> proxy.type(ProxyProvider.Proxy.HTTP)
-                            .host(proxyHost)
-                            .port(Integer.parseInt(proxyPort))
-                            .username(proxyUserName)
-                            .password(p -> proxyPassword));
-            return WebClient.builder()
-                    .baseUrl((endpoint != null) ? endpoint : DEFAULT_ENDPOINT)
-                    .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-                    .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
-                    .build();
-        } else {
-            return WebClient.builder()
-                    .baseUrl((endpoint != null) ? endpoint : DEFAULT_ENDPOINT)
-                    .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-                    .build();
-        }
-    }
 
-    private com.azure.core.http.HttpClient getAzureSdkHttpClientWithProxy() {
-        String proxyHost = System.getProperty("http.proxyHost");
-        String proxyPort = System.getProperty("http.proxyPort");
-        if (proxyHost != null && proxyPort != null) {
-            log.info("Azure SDK using proxy host: {} port: {}", proxyHost, proxyPort);
-            ProxyOptions proxyOptions = new ProxyOptions(ProxyOptions.Type.HTTP, new InetSocketAddress(proxyHost, Integer.parseInt(proxyPort)));
-            return new NettyAsyncHttpClientBuilder().proxy(proxyOptions).build();
-        }
-        return null;
+    private WebClient getWebClient(String endpoint){
+        return webClientBuilder
+                .baseUrl((endpoint != null)? endpoint : DEFAULT_ENDPOINT)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                .build();
     }
 
     private AzDevOpsToken validateNewToken(AzDevOpsToken azDevOpsToken) throws TokenException {
-        if (azDevOpsToken != null) {
+        if(azDevOpsToken != null) {
             return azDevOpsToken;
         } else {
-            throw new TokenException("500", "Unable to get Azure DevOps Token");
+            throw new TokenException("500","Unable to get Azure DevOps Token");
         }
     }
 }
