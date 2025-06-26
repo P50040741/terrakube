@@ -4,6 +4,7 @@ import java.net.URISyntaxException;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,7 +12,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestTemplate;
 import org.terrakube.api.plugin.scheduler.job.tcl.executor.ephemeral.EphemeralExecutorService;
 import org.terrakube.api.plugin.scheduler.job.tcl.model.Flow;
 import org.terrakube.api.plugin.token.dynamic.DynamicCredentialsService;
@@ -23,6 +24,8 @@ import org.terrakube.api.rs.collection.item.Item;
 import org.terrakube.api.rs.globalvar.Globalvar;
 import org.terrakube.api.rs.job.Job;
 import org.terrakube.api.rs.job.JobStatus;
+import org.terrakube.api.rs.job.address.Address;
+import org.terrakube.api.rs.job.address.AddressType;
 import org.terrakube.api.rs.ssh.Ssh;
 import org.terrakube.api.rs.vcs.Vcs;
 import org.terrakube.api.rs.workspace.parameters.Category;
@@ -31,7 +34,6 @@ import org.terrakube.api.rs.workspace.parameters.Variable;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Mono;
 
 @Slf4j
 @Service
@@ -67,9 +69,6 @@ public class ExecutorService {
     private VariableRepository variableRepository;
     @Autowired
     private ReferenceRepository referenceRepository;
-
-    @Autowired
-    private WebClient webClient;
 
     @Transactional
     public ExecutorContext execute(Job job, String stepId, Flow flow) {
@@ -168,9 +167,33 @@ public class ExecutorService {
         executorContext.setRefresh(job.isRefresh());
         executorContext.setRefreshOnly(job.isRefreshOnly());
         executorContext.setAgentUrl(getExecutorUrl(job));
+        executorContext = validateJobAddress(executorContext, job);
         return executorContext.getEnvironmentVariables().containsKey("TERRAKUBE_ENABLE_EPHEMERAL_EXECUTOR")
                 ? ephemeralExecutorService.sendToEphemeralExecutor(job, executorContext)
                 : sendToExecutor(job, executorContext);
+    }
+
+    private ExecutorContext validateJobAddress(ExecutorContext executorContext, Job job) {
+        if (job.getAddress() != null && !job.getAddress().isEmpty() && (job.getTerraformPlan() == null || job.getTerraformPlan().isEmpty())) {
+            List<Address> addressList = job.getAddress();
+            StringBuilder tfCliArgsPlan= new StringBuilder();
+            for(Address address : addressList) {
+                if (address.getType().equals(AddressType.TARGET)) {
+                    tfCliArgsPlan.append(String.format(" -target=\"%s\"", address.getName()));
+                }
+
+                if (address.getType().equals(AddressType.REPLACE)) {
+                    tfCliArgsPlan.append(String.format(" -replace=\"%s\"", address.getName()));
+                }
+            }
+
+            if(!tfCliArgsPlan.isEmpty()) {
+                log.info("Adding TF_CLI_ARGS_PLAN to environment variables: {}", tfCliArgsPlan.toString());
+                executorContext.getEnvironmentVariables().putIfAbsent("TF_CLI_ARGS_plan", tfCliArgsPlan.toString());
+            }
+        }
+
+        return executorContext;
     }
 
     private String getExecutorUrl(Job job) {
@@ -198,22 +221,13 @@ public class ExecutorService {
     }
 
     private ExecutorContext sendToExecutor(Job job, ExecutorContext executorContext) {
+        RestTemplate restTemplate = new RestTemplate();
         boolean executed = false;
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<ExecutorContext> entity = new HttpEntity<>(executorContext, headers);
-
-            ResponseEntity<ExecutorContext> response = webClient.post()
-                    .uri(getExecutorUrl(job))
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .bodyValue(executorContext)
-                    .retrieve()
-                    .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                            clientResponse -> clientResponse.createException().flatMap(Mono::error))
-                    .toEntity(ExecutorContext.class)
-                    .block();
-
+            ResponseEntity<ExecutorContext> response = restTemplate.postForEntity(getExecutorUrl(job), entity, ExecutorContext.class);
             executorContext.setAccessToken("****");
             executorContext.setModuleSshKey("****");
             log.debug("Sending Job: /n {}", executorContext);

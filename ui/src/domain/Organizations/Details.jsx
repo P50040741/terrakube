@@ -249,7 +249,7 @@ export const OrganizationDetails = ({
                         }
                       } 
                     }
-                    job(sort: "id") {
+                    job(sort: "-updatedDate") {
                       edges {
                         node {
                           id
@@ -554,7 +554,8 @@ function setupOrganizationIncludes(
 
   includes.forEach((element) => {
     //get latest job for workspace
-    var lastJob = element.node.job.edges?.slice(-1)?.pop()?.node;
+//     var lastJob = element.node.job.edges?.slice(-1)?.pop()?.node;
+    var lastJob = element.node.job.edges?.[0]?.node;
     var lastStatus = lastJob?.status ?? "never executed";
     workspaces.push({
       id: element.node.id,

@@ -1,6 +1,14 @@
 package org.terrakube.api.plugin.vcs.provider.azdevops;
 
+import com.azure.core.credential.AccessToken;
+import com.azure.core.credential.TokenRequestContext;
+import com.azure.core.http.ProxyOptions;
+import com.azure.core.http.netty.NettyAsyncHttpClientBuilder;
+import com.azure.identity.DefaultAzureCredential;
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.terrakube.api.plugin.token.dynamic.DynamicCredentialsService;
 import org.terrakube.api.plugin.vcs.provider.exception.TokenException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -10,16 +18,24 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
+import reactor.netty.transport.ProxyProvider;
+
+import java.net.InetSocketAddress;
+import java.util.Collections;
 
 @Service
+@Slf4j
 public class AzDevOpsTokenService {
-    @Autowired
-    private WebClient.Builder webClientBuilder; // Use Spring-managed WebClient.Builder
 
     @Value("${org.terrakube.hostname}")
     private String hostname;
 
-    private static final String DEFAULT_ENDPOINT="https://app.vssps.visualstudio.com";
+    @Autowired
+    private DynamicCredentialsService dynamicCredentialsService;
+
+    private static final String DEFAULT_ENDPOINT = "https://app.vssps.visualstudio.com";
+    private static final String AZURE_DEVOPS_SCOPE = "6d1fbb15-0b67-49d9-8477-d3ed02cbebfd/.default"; // Azure DevOps scope
 
     public AzDevOpsToken getAccessToken(String vcsId, String clientSecret, String tempCode, String callback, String endpoint) throws TokenException {
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
@@ -27,7 +43,7 @@ public class AzDevOpsTokenService {
         formData.add("client_assertion", clientSecret);
         formData.add("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
         formData.add("assertion", tempCode);
-        formData.add("redirect_uri", String.format("https://%s/callback/v1/vcs/%s", hostname, callback == null ? vcsId: callback));
+        formData.add("redirect_uri", String.format("https://%s/callback/v1/vcs/%s", hostname, callback == null ? vcsId : callback));
 
         AzDevOpsToken azDevOpsToken = getWebClient(endpoint).post()
                 .uri("/oauth2/token")
@@ -45,9 +61,9 @@ public class AzDevOpsTokenService {
         formData.add("client_assertion", clientSecret);
         formData.add("grant_type", "refresh_token");
         formData.add("assertion", refreshToken);
-        formData.add("redirect_uri", String.format("https://%s/callback/v1/vcs/%s", hostname, callback == null ? vcsId: callback));
+        formData.add("redirect_uri", String.format("https://%s/callback/v1/vcs/%s", hostname, callback == null ? vcsId : callback));
 
-        AzDevOpsToken azDevOpsToken  = getWebClient(endpoint).post()
+        AzDevOpsToken azDevOpsToken = getWebClient(endpoint).post()
                 .uri("/oauth2/token")
                 .body(BodyInserters.fromFormData(formData))
                 .retrieve()
@@ -57,18 +73,76 @@ public class AzDevOpsTokenService {
         return validateNewToken(azDevOpsToken);
     }
 
-    private WebClient getWebClient(String endpoint){
-        return webClientBuilder
-                .baseUrl((endpoint != null)? endpoint : DEFAULT_ENDPOINT)
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-                .build();
+    public AzDevOpsToken getAzureDefaultToken() throws TokenException {
+        AzDevOpsToken azDevOpsToken = new AzDevOpsToken();
+        try {
+            DefaultAzureCredentialBuilder credentialBuilder = new DefaultAzureCredentialBuilder();
+            com.azure.core.http.HttpClient azureHttpClient = getAzureSdkHttpClientWithProxy();
+            if (azureHttpClient != null) {
+                credentialBuilder.httpClient(azureHttpClient);
+            }
+            DefaultAzureCredential credential = credentialBuilder.build();
+            TokenRequestContext requestContext = new TokenRequestContext()
+                    .setScopes(Collections.singletonList(AZURE_DEVOPS_SCOPE));
+            AccessToken accessToken = credential.getToken(requestContext).block();
+            if (accessToken == null || accessToken.getToken() == null) {
+                throw new TokenException("500", "Failed to acquire Azure Managed Identity token. Check your environment configuration.");
+            }
+            azDevOpsToken.setAccess_token(accessToken.getToken());
+            log.debug("Azure Default Token: {}", azDevOpsToken.getAccess_token());
+        } catch (Exception ex) {
+            log.error("Error getting Azure Default Token: {}", ex.getMessage());
+            throw new TokenException("500", "Error getting Azure Default Token: " + ex.getMessage());
+        }
+
+        azDevOpsToken.setRefresh_token("n/a");
+        azDevOpsToken.setToken_type("azure");
+        azDevOpsToken.setExpires_in(3600);
+        return validateNewToken(azDevOpsToken);
+    }
+
+    private WebClient getWebClient(String endpoint) {
+        String proxyHost = System.getProperty("http.proxyHost");
+        String proxyPort = System.getProperty("http.proxyPort");
+        String proxyUserName = System.getProperty("http.proxyUsername");
+        String proxyPassword = System.getProperty("http.proxyPassword");
+        if (proxyHost != null && proxyPort != null) {
+            log.info("Using proxy host: {} port: {}", proxyHost, proxyPort);
+            HttpClient httpClient = HttpClient.create()
+                    .proxy(proxy -> proxy.type(ProxyProvider.Proxy.HTTP)
+                            .host(proxyHost)
+                            .port(Integer.parseInt(proxyPort))
+                            .username(proxyUserName)
+                            .password(p -> proxyPassword));
+            return WebClient.builder()
+                    .baseUrl((endpoint != null) ? endpoint : DEFAULT_ENDPOINT)
+                    .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                    .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
+                    .build();
+        } else {
+            return WebClient.builder()
+                    .baseUrl((endpoint != null) ? endpoint : DEFAULT_ENDPOINT)
+                    .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                    .build();
+        }
+    }
+
+    private com.azure.core.http.HttpClient getAzureSdkHttpClientWithProxy() {
+        String proxyHost = System.getProperty("http.proxyHost");
+        String proxyPort = System.getProperty("http.proxyPort");
+        if (proxyHost != null && proxyPort != null) {
+            log.info("Azure SDK using proxy host: {} port: {}", proxyHost, proxyPort);
+            ProxyOptions proxyOptions = new ProxyOptions(ProxyOptions.Type.HTTP, new InetSocketAddress(proxyHost, Integer.parseInt(proxyPort)));
+            return new NettyAsyncHttpClientBuilder().proxy(proxyOptions).build();
+        }
+        return null;
     }
 
     private AzDevOpsToken validateNewToken(AzDevOpsToken azDevOpsToken) throws TokenException {
-        if(azDevOpsToken != null) {
+        if (azDevOpsToken != null) {
             return azDevOpsToken;
         } else {
-            throw new TokenException("500","Unable to get Azure DevOps Token");
+            throw new TokenException("500", "Unable to get Azure DevOps Token");
         }
     }
 }

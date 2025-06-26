@@ -1,6 +1,5 @@
 package org.terrakube.api.plugin.vcs.provider.bitbucket;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -27,9 +26,6 @@ import java.util.*;
 @Service
 @Slf4j
 public class BitBucketWebhookService extends WebhookServiceBase {
-
-    @Autowired
-    private WebClient.Builder webClientBuilder; // Use Spring-managed WebClient.Builder
 
     private final ObjectMapper objectMapper;
 
@@ -106,7 +102,7 @@ public class BitBucketWebhookService extends WebhookServiceBase {
             log.info("Base URL: {}",
                     String.format("%s://%s", urlBitbucketApi.getProtocol(), urlBitbucketApi.getHost()));
             log.info("URI: {}", urlBitbucketApi.getPath());
-            WebClient webClient = webClientBuilder
+            WebClient webClient = WebClient.builder()
                     .baseUrl(String.format("%s://%s", urlBitbucketApi.getProtocol(), urlBitbucketApi.getHost()))
                     .defaultHeader(HttpHeaders.AUTHORIZATION, accessToken)
                     .build();

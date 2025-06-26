@@ -84,6 +84,9 @@ public class Workspace extends GenericAuditFields {
     @Column(name = "deleted")
     private boolean deleted;
 
+    @Column(name = "allow_remote_apply")
+    private boolean allowRemoteApply = false;
+
     @Column(name = "default_template")
     private String defaultTemplate;
 
@@ -135,8 +138,8 @@ public class Workspace extends GenericAuditFields {
     @OneToOne
     private Agent agent;
     
-    @OneToMany(mappedBy = "workspace", fetch = FetchType.LAZY)
-    private List<Webhook> webhook;
+    @OneToOne(mappedBy = "workspace", fetch = FetchType.LAZY)
+    private Webhook webhook;
 
     @OneToMany(mappedBy = "workspace", fetch = FetchType.LAZY)
     private List<Reference> reference;

@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.text.TextStringBuilder;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.terrakube.executor.plugin.tfstate.TerraformState;
 import org.terrakube.executor.service.executor.ExecutorJobResult;
 import org.terrakube.executor.service.mode.TerraformJob;

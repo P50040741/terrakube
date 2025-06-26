@@ -14,24 +14,24 @@
     <name>Terrakube Terraform Registry</name>
     <description>Open Source Terraform Registry for Terrakube</description>
     <properties>
-        <azure.version>5.19.0</azure.version>
+        <azure.version>5.22.0</azure.version>
         <java.version>17</java.version>
-        <lombok.version>1.18.36</lombok.version>
-        <terrakube-client-starter.version>0.16.0-beta.1</terrakube-client-starter.version>
-        <jgit.version>7.1.0.202411261347-r</jgit.version>
-        <commons-io.version>2.18.0</commons-io.version>
+        <lombok.version>1.18.38</lombok.version>
+        <terrakube-client-starter.version>0.15.2</terrakube-client-starter.version>
+        <jgit.version>7.2.0.202503040940-r</jgit.version>
+        <commons-io.version>2.19.0</commons-io.version>
         <mockserver-spring-test-listener.version>5.13.2</mockserver-spring-test-listener.version>
-        <rest-assured.version>5.5.0</rest-assured.version>
+        <rest-assured.version>5.5.1</rest-assured.version>
         <!--groovy.version>3.0.8</groovy.version-->
-        <aws-sdk.version>2.30.11</aws-sdk.version>
+        <aws-sdk.version>2.31.30</aws-sdk.version>
         <zt-zip.version>1.17</zt-zip.version>
-        <gcp-libraries-bom.version>26.53.0</gcp-libraries-bom.version>
+        <gcp-libraries-bom.version>26.59.0</gcp-libraries-bom.version>
         <sonar.coverage.jacoco.xmlReportPaths>${basedir}/../${aggregate.report.dir}
         </sonar.coverage.jacoco.xmlReportPaths>
         <!--BUILDPACK DATA-->
-        <buildpack.builder>paketobuildpacks/builder-jammy-base:0.4.358</buildpack.builder>
-        <buildpack.java>gcr.io/paketo-buildpacks/java:17.3.0</buildpack.java>
-        <buildpack.telemetry>gcr.io/paketo-buildpacks/opentelemetry:2.6.0</buildpack.telemetry>
+        <buildpack.builder>paketobuildpacks/builder-jammy-base:0.4.415</buildpack.builder>
+        <buildpack.java>paketobuildpacks/java:18.8.0</buildpack.java>
+        <buildpack.telemetry>paketobuildpacks/opentelemetry:2.12.0</buildpack.telemetry>
     </properties>
     <build>
         <plugins>
@@ -133,6 +133,7 @@
             <groupId>org.mock-server</groupId>
             <artifactId>mockserver-spring-test-listener</artifactId>
             <version>${mockserver-spring-test-listener.version}</version>
+	    <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.google.cloud</groupId>

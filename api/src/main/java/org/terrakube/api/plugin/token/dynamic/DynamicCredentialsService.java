@@ -17,10 +17,7 @@ import java.security.PrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.UUID;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -40,6 +37,7 @@ public class DynamicCredentialsService {
 
     @Value("${org.terrakube.dynamic.credentials.ttl}")
     int dynamicCredentialTtl;
+
 
     @Transactional
     public HashMap<String, String> generateDynamicCredentialsAzure(Job job, HashMap<String, String> workspaceEnvVariables) {
@@ -68,8 +66,10 @@ public class DynamicCredentialsService {
                         .setAudience(tokenAudience)
                         .setId(UUID.randomUUID().toString())
                         .setHeaderParam("kid", kid)
-                        .claim("terrakube_workspace_id", organizationId)
-                        .claim("terrakube_organization_id", workspaceId)
+                        .claim("terrakube_workspace_id", workspaceId)
+                        .claim("terrakube_organization_id", organizationId)
+                        .claim("terrakube_workspace_name", workspaceName)
+                        .claim("terrakube_organization_name", organizationName)
                         .claim("terrakube_job_id", String.valueOf(jobId))
                         .setIssuedAt(Date.from(now))
                         .setIssuer(String.format("https://%s", hostname))

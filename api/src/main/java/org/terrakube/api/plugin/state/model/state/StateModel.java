@@ -1,6 +1,5 @@
 package org.terrakube.api.plugin.state.model.state;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -14,6 +13,4 @@ import org.terrakube.api.plugin.state.model.generic.Resource;
 @ToString
 public class StateModel  extends Resource {
     Map<String, Object> attributes;
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    StateRelationshipsModel relationships;
 }

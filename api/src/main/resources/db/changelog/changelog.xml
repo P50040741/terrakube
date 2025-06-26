@@ -70,4 +70,15 @@
     <include file="/db/changelog/local/changelog-2.24.0-collection-data-constraints.xml"/>
     <include file="/db/changelog/local/changelog-2.24.0-manage-job.xml"/>
     <include file="/db/changelog/local/changelog-2.25.0-workspace-access.xml"/>
+    <include file="/db/changelog/local/changelog-2.25.1-webhook-events.xml" />
+    <include file="/db/changelog/local/changelog-2.25.1-webhook-data.xml" />
+    <include file="/db/changelog/local/changelog-2.25.1-webhook-tidyup.xml" />
+    <include file="/db/changelog/local/changelog-2.26.0-cli-address.xml" />
+    <include file="/db/changelog/local/changelog-2.26.0-add-workspace-column.xml" />
+    <include file="/db/changelog/local/changelog-2.26.0-github-app-token-vcs.xml"/>
+    <include file="/db/changelog/local/changelog-2.26.0-module-vars-size.xml"/>
+    <include file="/db/changelog/local/changelog-2.26.0-vars-size.xml"/>
+    <include file="/db/changelog/local/changelog-2.26.0-vars-size-postgresql.xml"/>
+    <include file="/db/changelog/local/changelog-2.26.0-add-workspace-column-fix.xml" />
+    <include file="/db/changelog/local/changelog-2.26.0-size-access-token.xml" />
 </databaseChangeLog>

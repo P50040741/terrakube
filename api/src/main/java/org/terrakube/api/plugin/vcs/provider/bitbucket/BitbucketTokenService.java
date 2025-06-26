@@ -1,7 +1,6 @@
 package org.terrakube.api.plugin.vcs.provider.bitbucket;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.terrakube.api.plugin.vcs.provider.GetAccessToken;
 import org.terrakube.api.plugin.vcs.provider.exception.TokenException;
 import org.springframework.http.HttpHeaders;
@@ -19,9 +18,6 @@ import java.time.Duration;
 public class BitbucketTokenService implements GetAccessToken<BitBucketToken> {
 
     private static final String DEFAULT_ENDPOINT="https://bitbucket.org";
-
-    @Autowired
-    private WebClient.Builder webClientBuilder; // Use Spring-managed WebClient.Builder
 
     @Override
     public BitBucketToken getAccessToken(String clientId, String clientSecret, String tempCode, String callback, String endpoint) throws TokenException {
@@ -91,7 +87,7 @@ public class BitbucketTokenService implements GetAccessToken<BitBucketToken> {
     }
 
     private WebClient getClient(String clientId, String clientSecret, String endpoint) {
-        return webClientBuilder
+        return WebClient.builder()
                 .baseUrl((endpoint != null) ? endpoint : DEFAULT_ENDPOINT)
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)

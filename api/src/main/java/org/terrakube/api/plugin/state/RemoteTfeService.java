@@ -1,8 +1,5 @@
 package org.terrakube.api.plugin.state;
 
-import javax.crypto.Cipher;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
@@ -18,6 +15,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.terrakube.api.plugin.scheduler.ScheduleJobService;
+import org.terrakube.api.plugin.security.encryption.EncryptionService;
 import org.terrakube.api.plugin.state.model.apply.ApplyRunData;
 import org.terrakube.api.plugin.state.model.apply.ApplyRunModel;
 import org.terrakube.api.plugin.state.model.configuration.ConfigurationData;
@@ -56,6 +54,8 @@ import org.terrakube.api.repository.*;
 import org.terrakube.api.rs.Organization;
 import org.terrakube.api.rs.job.Job;
 import org.terrakube.api.rs.job.JobStatus;
+import org.terrakube.api.rs.job.address.Address;
+import org.terrakube.api.rs.job.address.AddressType;
 import org.terrakube.api.rs.job.step.Step;
 import org.terrakube.api.rs.tag.Tag;
 import org.terrakube.api.rs.template.Template;
@@ -67,7 +67,6 @@ import org.terrakube.api.rs.workspace.history.archive.Archive;
 import org.terrakube.api.rs.workspace.history.archive.ArchiveType;
 import org.terrakube.api.rs.workspace.tag.WorkspaceTag;
 
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -77,6 +76,7 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class RemoteTfeService {
 
+    private AddressRepository addressRepository;
     private JobRepository jobRepository;
     private ContentRepository contentRepository;
     private OrganizationRepository organizationRepository;
@@ -101,7 +101,7 @@ public class RemoteTfeService {
 
     private AccessRepository accessRepository;
 
-    private String internalBase64Secret;
+    private EncryptionService encryptionService;
 
     public RemoteTfeService(JobRepository jobRepository,
                             ContentRepository contentRepository,
@@ -120,7 +120,7 @@ public class RemoteTfeService {
                             TeamTokenService teamTokenService,
                             ArchiveRepository archiveRepository,
                             AccessRepository accessRepository,
-                            @Value("${org.terrakube.token.internal}") String internalBase64Secret) {
+                            EncryptionService encryptionService, AddressRepository addressRepository) {
         this.jobRepository = jobRepository;
         this.contentRepository = contentRepository;
         this.organizationRepository = organizationRepository;
@@ -138,7 +138,8 @@ public class RemoteTfeService {
         this.teamTokenService = teamTokenService;
         this.archiveRepository = archiveRepository;
         this.accessRepository = accessRepository;
-        this.internalBase64Secret = internalBase64Secret;
+        this.encryptionService = encryptionService;
+        this.addressRepository = addressRepository;
     }
 
     private boolean validateTerrakubeUser(JwtAuthenticationToken currentUser) {
@@ -371,7 +372,7 @@ public class RemoteTfeService {
 
             attributes.put("permissions", defaultAttributes);
 
-            if (workspace.get().getVcs() != null) {
+            if (workspace.get().getVcs() != null && !workspace.get().isAllowRemoteApply()) {
                 VcsRepo vcsRepo = new VcsRepo();
                 vcsRepo.setBranch(workspace.get().getBranch());
                 vcsRepo.setRepositoryHttpUrl(workspace.get().getSource());
@@ -600,29 +601,22 @@ public class RemoteTfeService {
         String terraformStateJson = new String(Base64.getMimeDecoder().decode(decodedBytesJson));
 
         // create dummy job
-        Job job;
-        if (stateData.getData().getRelationships() != null) {
-            job = jobRepository.getReferenceById(
-                Integer.valueOf(stateData.getData().getRelationships().getRun().getData().getId())
-            );
-        } else {
-            job = new Job();
-            job.setWorkspace(workspace);
-            job.setOrganization(workspace.getOrganization());
-            job.setStatus(JobStatus.completed);
-            job.setRefresh(true);
-            job.setPlanChanges(true);
-            job.setRefreshOnly(false);
-            job = jobRepository.save(job);
+        Job job = new Job();
+        job.setWorkspace(workspace);
+        job.setOrganization(workspace.getOrganization());
+        job.setStatus(JobStatus.completed);
+        job.setRefresh(true);
+        job.setPlanChanges(true);
+        job.setRefreshOnly(false);
+        job = jobRepository.save(job);
 
-            // dummy step
-            Step step = new Step();
-            step.setJob(job);
-            step.setName("Dummy State Uploaded");
-            step.setStatus(JobStatus.completed);
-            step.setStepNumber(100);
-            stepRepository.save(step);
-        }
+        // dummy step
+        Step step = new Step();
+        step.setJob(job);
+        step.setName("Dummy State Uploaded");
+        step.setStatus(JobStatus.completed);
+        step.setStepNumber(100);
+        stepRepository.save(step);
 
         // create dummy history
         History history = new History();
@@ -855,6 +849,7 @@ public class RemoteTfeService {
         log.info("Creating new Terrakube Job");
         log.info("Workspace {} Configuration {}", workspaceId, configurationId);
         log.info("isDestroy {} autoApply {}", isDestroy, autoApply);
+
         Workspace workspace = workspaceRepository.getReferenceById(UUID.fromString(workspaceId));
         String sourceTarGz = String.format("https://%s/remote/tfe/v2/configuration-versions/%s/terraformContent.tar.gz",
                 hostname, configurationId);
@@ -894,6 +889,33 @@ public class RemoteTfeService {
 
         job = jobRepository.save(job);
         log.info("Job Created");
+
+        if(runsData.getData().getAttributes().get("target-addrs") != null) {
+            log.info("Target Addresses {}", runsData.getData().getAttributes().get("target-addrs"));
+            List<String> targetAddrs = (List<String>) runsData.getData().getAttributes().get("target-addrs");
+            for(String target: targetAddrs){
+                Address address = new Address();
+                address.setName(target);
+                address.setType(AddressType.TARGET);
+                address.setJob(job);
+                addressRepository.save(address);
+            }
+            log.info("Target Addresses Java List {}", targetAddrs);
+        }
+
+        if(runsData.getData().getAttributes().get("replace-addrs") != null) {
+            log.info("Replace Addresses {}", runsData.getData().getAttributes().get("replace-addrs"));
+            List<String> replaceAddres = (List<String>) runsData.getData().getAttributes().get("replace-addrs");
+            for(String replace: replaceAddres){
+                Address address = new Address();
+                address.setName(replace);
+                address.setType(AddressType.REPLACE);
+                address.setJob(job);
+                addressRepository.save(address);
+            }
+            log.info("Replace Addresses Java List {}", replaceAddres);
+        }
+
         scheduleJobService.createJobContext(job);
         log.info("Job Context Created");
         return getRun(job.getId(), null);
@@ -1166,8 +1188,10 @@ public class RemoteTfeService {
         planRunModel.getAttributes().put("actions", actions);
 
         planRunModel.getAttributes().put("status", planStatus);
+        String encryptedPlanId = encryptionService.encrypt(String.valueOf(planId));
+        log.info("log-read-url: {}", String.format("https://%s/remote/tfe/v2/plans/logs/%s", hostname, encryptedPlanId));
         planRunModel.getAttributes().put("log-read-url",
-                String.format("https://%s/remote/tfe/v2/plans/%s/logs", hostname, encryptPlanId(planId)));
+                String.format("https://%s/remote/tfe/v2/plans/logs/%s", hostname, encryptedPlanId));
         plansData.setData(planRunModel);
         return plansData;
     }
@@ -1203,79 +1227,92 @@ public class RemoteTfeService {
             }
         }
         applyModel.getAttributes().put("status", applyStatus);
+        String encryptedPlanId = encryptionService.encrypt(String.valueOf(planId));
+        log.info("log-read-url: {}", String.format("https://%s/remote/tfe/v2/applies/logs/%s", hostname, encryptedPlanId));
         applyModel.getAttributes().put("log-read-url",
-                String.format("https://%s/remote/tfe/v2/applies/%s/logs", hostname, encryptPlanId(planId)));
+                String.format("https://%s/remote/tfe/v2/applies/logs/%s", hostname, encryptedPlanId));
+
         applyRunData.setData(applyModel);
         return applyRunData;
     }
 
-    byte[] getPlanLogs(String encryptedPlanId, int offset, int limit) {
-        int planId = decryptPlanId(encryptedPlanId);
-        Job job = jobRepository.getReferenceById(Integer.valueOf(planId));
+    byte[] getPlanLogs(String planId, int offset, int limit) {
+        planId = encryptionService.decrypt(planId);
+        log.info("Searching logs for plan {}", planId);
+        Optional<Job> job = jobRepository.findById(Integer.valueOf(planId));
         byte[] logs = "".getBytes();
-        TextStringBuilder logsOutput = new TextStringBuilder();
-        if (job.getStep() != null && !job.getStep().isEmpty())
-            for (Step step : job.getStep()) {
-                if (step.getStepNumber() == 100) {
-                    log.info("Checking logs for plan: {}", step.getId());
+        if(job.isPresent()) {
+            TextStringBuilder logsOutput = new TextStringBuilder();
+            if (job.get().getStep() != null && !job.get().getStep().isEmpty())
+                for (Step step : job.get().getStep()) {
+                    if (step.getStepNumber() == 100) {
+                        log.info("Checking logs for plan: {}", step.getId());
 
-                    try {
-                        @SuppressWarnings("unchecked")
-                        List<MapRecord<String, String, String>> messagesPlan = redisTemplate.opsForStream()
-                                .read(StreamOffset.fromStart(String.valueOf(job.getId())),
-                                        StreamOffset.latest(String.valueOf(job.getId())));
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<MapRecord<String, String, String>> messagesPlan = redisTemplate.opsForStream()
+                                    .read(StreamOffset.fromStart(String.valueOf(job.get().getId())),
+                                            StreamOffset.latest(String.valueOf(job.get().getId())));
 
-                        for (MapRecord<String, String, String> mapRecord : messagesPlan) {
-                            Map<String, String> streamData = (Map<String, String>) mapRecord.getValue();
-                            logsOutput.appendln(streamData.get("output"));
+                            for (MapRecord<String, String, String> mapRecord : messagesPlan) {
+                                Map<String, String> streamData = (Map<String, String>) mapRecord.getValue();
+                                logsOutput.appendln(streamData.get("output"));
+                            }
+
+                            String logsOutputString = logsOutput.toString();
+                            int potentialEndIndex = limit + offset;
+                            int endIndex = logsOutputString.length() > potentialEndIndex ? potentialEndIndex
+                                    : logsOutputString.length();
+                            logs = logsOutputString.substring(offset, endIndex).getBytes(StandardCharsets.UTF_8);
+                            log.debug("{}", logs);
+                        } catch (Exception ex) {
+                            log.debug(ex.getMessage());
                         }
-
-                        String logsOutputString = logsOutput.toString();
-                        int potentialEndIndex = limit + offset;
-                        int endIndex = logsOutputString.length() > potentialEndIndex ? potentialEndIndex
-                                : logsOutputString.length();
-                        logs = logsOutputString.substring(offset, endIndex).getBytes(StandardCharsets.UTF_8);
-                        log.debug("{}", logs);
-                    } catch (Exception ex) {
-                        log.debug(ex.getMessage());
                     }
                 }
-            }
+        } else {
+            log.warn("No logs found for plan {}", planId);
+        }
         return logs;
     }
 
-    byte[] getApplyLogs(String encryptedPlanId, int offset, int limit) {
-        int planId = decryptPlanId(encryptedPlanId);
-        Job job = jobRepository.getReferenceById(Integer.valueOf(planId));
+    byte[] getApplyLogs(String applyId, int offset, int limit) {
+        applyId = encryptionService.decrypt(applyId);
+        log.info("Searching logs for apply {}", applyId);
+        Optional<Job> job = jobRepository.findById(Integer.valueOf(applyId));
         byte[] logs = "".getBytes();
-        TextStringBuilder logsOutputApply = new TextStringBuilder();
-        if (job.getStep() != null && !job.getStep().isEmpty())
-            for (Step step : job.getStep()) {
-                if (step.getStepNumber() == 100) {
-                    log.debug("Checking logs stepId for apply: {}", step.getId());
+        if (job.isPresent()) {
+            TextStringBuilder logsOutputApply = new TextStringBuilder();
+            if (job.get().getStep() != null && !job.get().getStep().isEmpty())
+                for (Step step : job.get().getStep()) {
+                    if (step.getStepNumber() == 100) {
+                        log.debug("Checking logs stepId for apply: {}", step.getId());
 
-                    try {
-                        @SuppressWarnings("unchecked")
-                        List<MapRecord<String, String, String>> messagesApply = redisTemplate.opsForStream().read(
-                                StreamOffset.fromStart(String.valueOf(job.getId())),
-                                StreamOffset.latest(String.valueOf(job.getId())));
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<MapRecord<String, String, String>> messagesApply = redisTemplate.opsForStream().read(
+                                    StreamOffset.fromStart(String.valueOf(job.get().getId())),
+                                    StreamOffset.latest(String.valueOf(job.get().getId())));
 
-                        for (MapRecord<String, String, String> mapRecord : messagesApply) {
-                            Map<String, String> streamData = (Map<String, String>) mapRecord.getValue();
-                            logsOutputApply.appendln(streamData.get("output"));
+                            for (MapRecord<String, String, String> mapRecord : messagesApply) {
+                                Map<String, String> streamData = (Map<String, String>) mapRecord.getValue();
+                                logsOutputApply.appendln(streamData.get("output"));
+                            }
+
+                            String logsOutputString = logsOutputApply.toString();
+                            int potentialEndIndex = limit + offset;
+                            int endIndex = logsOutputString.length() > potentialEndIndex ? potentialEndIndex
+                                    : logsOutputString.length();
+                            logs = logsOutputString.substring(offset, endIndex).getBytes(StandardCharsets.UTF_8);
+                            log.debug("{}", logs);
+                        } catch (Exception ex) {
+                            log.debug(ex.getMessage());
                         }
-
-                        String logsOutputString = logsOutputApply.toString();
-                        int potentialEndIndex = limit + offset;
-                        int endIndex = logsOutputString.length() > potentialEndIndex ? potentialEndIndex
-                                : logsOutputString.length();
-                        logs = logsOutputString.substring(offset, endIndex).getBytes(StandardCharsets.UTF_8);
-                        log.debug("{}", logs);
-                    } catch (Exception ex) {
-                        log.debug(ex.getMessage());
                     }
                 }
-            }
+        } else {
+            log.warn("No logs found for apply {}", applyId);
+        }
         return logs;
     }
 
@@ -1326,37 +1363,4 @@ public class RemoteTfeService {
 
         return stateOutputs;
     }
-
-    private String encryptPlanId(int planId) {
-        try {
-            byte[] decodedKey = Base64.getDecoder().decode(internalBase64Secret);
-            SecretKey secretKey = new SecretKeySpec(decodedKey, "AES");
-
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey);
-            byte[] encryptedBytes = cipher.doFinal(String.valueOf(planId).getBytes());
-
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(encryptedBytes);
-        } catch (Exception e) {
-            throw new RuntimeException("Error encrypting planId", e);
-        }
-    }
-
-    private int decryptPlanId(String encryptedPlanId) {
-        try {
-            byte[] decodedKey = Base64.getDecoder().decode(internalBase64Secret);
-            SecretKey secretKey = new SecretKeySpec(decodedKey, "AES");
-
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey);
-            byte[] decryptedBytes = cipher.doFinal(Base64.getUrlDecoder().decode(encryptedPlanId));
-
-            return Integer.parseInt(new String(decryptedBytes));
-        } catch (Exception e) {
-            throw new RuntimeException("Error decrypting planId", e);
-        }
-    }
-
-
-
 }

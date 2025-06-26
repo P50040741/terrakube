@@ -5,17 +5,11 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
+import com.yahoo.elide.annotation.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.terrakube.api.plugin.security.audit.GenericAuditFields;
 import org.terrakube.api.rs.IdConverter;
 import org.terrakube.api.rs.Organization;
-
-import com.yahoo.elide.annotation.CreatePermission;
-import com.yahoo.elide.annotation.DeletePermission;
-import com.yahoo.elide.annotation.Exclude;
-import com.yahoo.elide.annotation.Include;
-import com.yahoo.elide.annotation.ReadPermission;
-import com.yahoo.elide.annotation.UpdatePermission;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -26,18 +20,22 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Temporal;
 import jakarta.persistence.TemporalType;
 import lombok.Getter;
 import lombok.Setter;
+import org.terrakube.api.rs.hooks.schedule.ScheduleManageHook;
+import org.terrakube.api.rs.hooks.vcs.VcsManageHook;
 import org.terrakube.api.rs.workspace.Workspace;
 
 @ReadPermission(expression = "team view vcs")
 @CreatePermission(expression = "team manage vcs")
 @UpdatePermission(expression = "team manage vcs")
 @DeletePermission(expression = "team manage vcs")
+@LifeCycleHookBinding(operation = LifeCycleHookBinding.Operation.CREATE, phase = LifeCycleHookBinding.TransactionPhase.POSTCOMMIT, hook = VcsManageHook.class)
 @Include(rootLevel = false)
 @Getter
 @Setter
@@ -110,7 +108,4 @@ public class Vcs extends GenericAuditFields {
 
     @OneToMany(mappedBy = "vcs")
     private List<Workspace> workspace;
-
-    @OneToMany(mappedBy = "vcs", orphanRemoval = true, cascade = {CascadeType.REMOVE}) 
-    private List<GitHubAppToken> gitHubAppToken;
 }
